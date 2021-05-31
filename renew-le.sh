@@ -2,44 +2,85 @@
 set -o nounset -o errexit
 
 WORKDIR=$(dirname "$(realpath $0)")
-EMAIL="abork@abork.co"
+EMAIL=${EMAIL:-""}
+
+if [[ -z "$EMAIL" ]]; then
+	echo "EMAIL is not set"
+	exit 1
+fi
+
+# This is needed for enabling the certificates
+# TODO : Store safely
+DIRPASSWD=${DIRPASSWD:-""}
+
+if [[ -z "$DIRPASSWD" ]]; then
+	echo "DIRPASSWD is not set"
+	exit 1
+fi
 
 ### cron
 # check that the cert will last at least 2 days from now to prevent too frequent renewal
 # comment out this line for the first run
 if [ "${1:-renew}" != "--first-time" ]
 then
-	start_timestamp=`date +%s --date="$(openssl x509 -startdate -noout -in /var/lib/ipa/certs/httpd.crt | cut -d= -f2)"`
-	now_timestamp=`date +%s`
-	let diff=($now_timestamp-$start_timestamp)/86400
-	if [ "$diff" -lt "2" ]; then
-		exit 0
-	fi
+        echo "Checking when certificate was renewed"
+        start_timestamp=`date +%s --date="$(openssl x509 -startdate -noout -in /var/lib/ipa/certs/httpd.crt | cut -d= -f2)"`
+        now_timestamp=`date +%s`
+        diff=$(((now_timestamp-start_timestamp) / 86400))
+        if [ "$diff" -lt "2" ]; then
+                echo "No renewal needed"
+                exit 0
+        fi
 fi
+
 cd "$WORKDIR"
+echo "the workdir is $WORKDIR"
 # cert renewal is needed if we reached this line
+echo "Renewal needed"
 
 # cleanup
-rm -f "$WORKDIR"/*.pem
-rm -f "$WORKDIR"/httpd-csr.*
+needs_cleanup=false
+for f in "$WORKDIR/*.key"; do
+	echo $f
+    ## Check if the glob gets expanded to existing files.
+    ## If not, f here will be exactly the pattern above
+    ## and the exists test will evaluate to false.
+	if [ -e $f ]; then
+		needs_cleanup=true
+	fi
 
-# generate CSR
+    ## This is all we needed to know, so we can break after the first iteration
+    break
+done
+
+if [ "$needs_cleanup" = true ]; then
+	#backup
+	echo "BACKUP"
+	mkdir -p "$WORKDIR"/backup
+	rm -f "$WORKDIR"/backup/*
+	mv "$WORKDIR"/*.key "$WORKDIR"/backup/
+	mv "$WORKDIR"/*.pem "$WORKDIR"/backup/
+
+	#cleanup
+	rm -f "$WORKDIR"/*.csr
+	rm -f "$WORKDIR"/*.key
+	rm -f "$WORKDIR"/*.pem
+fi
+
 OPENSSL_PASSWD_FILE="/var/lib/ipa/passwds/$HOSTNAME-443-RSA"
 [ -f "$OPENSSL_PASSWD_FILE" ] && OPENSSL_EXTRA_ARGS="-passin file:$OPENSSL_PASSWD_FILE" || OPENSSL_EXTRA_ARGS=""
 OPENSSL_PASSPHRASE=$( /usr/libexec/ipa/ipa-httpd-pwdreader $HOSTNAME:443 RSA)
 [[ -n "$OPENSSL_PASSPHRASE" ]] && OPENSSL_EXTRA_ARGS="$OPENSSL_EXTRA_ARGS -passin pass:$OPENSSL_PASSPHRASE"
-openssl req -new -sha256 -config "$WORKDIR/ipa-httpd.cnf"  -key /var/lib/ipa/private/httpd.key -out "$WORKDIR/httpd-csr.der" $OPENSSL_EXTRA_ARGS
+# generate CSR
+openssl req -new -config "$WORKDIR/ipa-httpd.cnf" -keyout "$WORKDIR/req.key" -out "$WORKDIR/req.csr"
 
 # httpd process prevents letsencrypt from working, stop it
 service httpd stop
 
 # get a new cert
-letsencrypt certonly --standalone --csr "$WORKDIR/httpd-csr.der" --email "$EMAIL" --agree-tos --no-eff-email
+letsencrypt certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem" \
+--preferred-challenges dns --manual --manual-public-ip-logging-ok --manual-auth-hook "$WORKDIR/certbot-dns-ipa.py" --manual-cleanup-hook "$WORKDIR/certbot-dns-ipa.py"
 
 # replace the cert
-cp /var/lib/ipa/certs/httpd.crt /var/lib/ipa/certs/httpd.crt.bkp
-mv -f "$WORKDIR/0000_cert.pem" /var/lib/ipa/certs/httpd.crt
-restorecon -v /var/lib/ipa/certs/httpd.crt
-
-# start httpd with the new cert
-service httpd start
+yes $DIRPASSWD "" | ipa-server-certinstall -w -d "$WORKDIR/req.key" "$WORKDIR/cert.pem"
+ipactl restart --ignore-service-failure
