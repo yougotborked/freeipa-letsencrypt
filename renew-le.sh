@@ -34,7 +34,6 @@ then
 fi
 
 cd "$WORKDIR"
-echo "the workdir is $WORKDIR"
 # cert renewal is needed if we reached this line
 echo "Renewal needed"
 
@@ -78,9 +77,8 @@ openssl req -new -config "$WORKDIR/ipa-httpd.cnf" -keyout "$WORKDIR/req.key" -ou
 service httpd stop
 
 # get a new cert
-letsencrypt certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem" \
---preferred-challenges dns --manual --manual-public-ip-logging-ok --manual-auth-hook "$WORKDIR/certbot-dns-ipa.py" --manual-cleanup-hook "$WORKDIR/certbot-dns-ipa.py"
+letsencrypt certonly --standalone --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem"
 
 # replace the cert
 yes $DIRPASSWD "" | ipa-server-certinstall -w -d "$WORKDIR/req.key" "$WORKDIR/cert.pem"
-ipactl restart --ignore-service-failure
+ipactl restart

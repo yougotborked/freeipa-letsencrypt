@@ -1,5 +1,5 @@
 # the fully qualified server (or service) name
-FQDN = server.example.test
+FQDN = coruscant.lab.abork.co
 ALTNAMES = DNS:$FQDN
 
 # --- no modifications required below ---
