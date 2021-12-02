@@ -3,6 +3,7 @@ set -o nounset -o errexit
 
 WORKDIR=$(dirname "$(realpath $0)")
 EMAIL=${EMAIL:-""}
+DOMAIN=coruscant.lab.abork.co
 
 if [[ -z "$EMAIL" ]]; then
 	echo "EMAIL is not set"
@@ -37,48 +38,31 @@ cd "$WORKDIR"
 # cert renewal is needed if we reached this line
 echo "Renewal needed"
 
-# cleanup
-needs_cleanup=false
-for f in "$WORKDIR/*.key"; do
-	echo $f
-    ## Check if the glob gets expanded to existing files.
-    ## If not, f here will be exactly the pattern above
-    ## and the exists test will evaluate to false.
-	if [ -e $f ]; then
-		needs_cleanup=true
-	fi
-
-    ## This is all we needed to know, so we can break after the first iteration
-    break
-done
-
-if [ "$needs_cleanup" = true ]; then
-	#backup
-	echo "BACKUP"
-	mkdir -p "$WORKDIR"/backup
-	rm -f "$WORKDIR"/backup/*
-	mv "$WORKDIR"/*.key "$WORKDIR"/backup/
-	mv "$WORKDIR"/*.pem "$WORKDIR"/backup/
-
-	#cleanup
-	rm -f "$WORKDIR"/*.csr
-	rm -f "$WORKDIR"/*.key
-	rm -f "$WORKDIR"/*.pem
-fi
-
 OPENSSL_PASSWD_FILE="/var/lib/ipa/passwds/$HOSTNAME-443-RSA"
 [ -f "$OPENSSL_PASSWD_FILE" ] && OPENSSL_EXTRA_ARGS="-passin file:$OPENSSL_PASSWD_FILE" || OPENSSL_EXTRA_ARGS=""
 OPENSSL_PASSPHRASE=$( /usr/libexec/ipa/ipa-httpd-pwdreader $HOSTNAME:443 RSA)
 [[ -n "$OPENSSL_PASSPHRASE" ]] && OPENSSL_EXTRA_ARGS="$OPENSSL_EXTRA_ARGS -passin pass:$OPENSSL_PASSPHRASE"
 # generate CSR
-openssl req -new -config "$WORKDIR/ipa-httpd.cnf" -keyout "$WORKDIR/req.key" -out "$WORKDIR/req.csr"
+if [ ! -f "$WORKDIR/req.csr" ]
+then
+	openssl req -new -config "$WORKDIR/ipa-httpd.cnf" -keyout "$WORKDIR/req.key" -out "$WORKDIR/req.csr"
+fi
 
 # httpd process prevents letsencrypt from working, stop it
 service httpd stop
 
 # get a new cert
-letsencrypt certonly --standalone --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem"
+letsencrypt --debug -v certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --manual --preferred-challenges dns -d "$DOMAIN" --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem"
+
+service httpd start
 
 # replace the cert
+
+cp "$WORKDIR/req.key" /tmp/req.key 
+cp "$WORKDIR/cert.pem" /tmp/cert.pem
+
+#uncomment this line to fix any expiration isues
+#date -s "3 SEP 2021"
+
 yes $DIRPASSWD "" | ipa-server-certinstall -w -d "$WORKDIR/req.key" "$WORKDIR/cert.pem"
 ipactl restart

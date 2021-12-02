@@ -1,8 +1,6 @@
 # the fully qualified server (or service) name
 FQDN = coruscant.lab.abork.co
-ALTNAMES = DNS:$FQDN
 
-# --- no modifications required below ---
 [ req ]
 default_bits = 2048
 default_md = sha256
@@ -15,4 +13,9 @@ req_extensions = req_ext
 CN = $FQDN
 
 [ req_ext ]
-subjectAltName = $ALTNAMES
+subjectAltName = @alt_names
+
+[alt_names]
+DNS.1 = $FQDN
+DNS.2 = coruscant-san.lab.abork.co
+DNS.3 = ipa.lab.abork.co
