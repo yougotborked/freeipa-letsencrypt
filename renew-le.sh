@@ -48,21 +48,32 @@ then
 	openssl req -new -config "$WORKDIR/ipa-httpd.cnf" -keyout "$WORKDIR/req.key" -out "$WORKDIR/req.csr"
 fi
 
+echo "$DIRPASSWD" | kinit admin
+
 # httpd process prevents letsencrypt from working, stop it
-service httpd stop
+#service httpd stop
 
 # get a new cert
-letsencrypt --debug -v certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --manual --preferred-challenges dns -d "$DOMAIN" --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem"
+letsencrypt --debug -v certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --manual --preferred-challenges dns -d "$DOMAIN" --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem" --manual-public-ip-logging-ok --manual-auth-hook "$WORKDIR/certbot-dns-ipa.py" --manual-cleanup-hook "$WORKDIR/certbot-dns-ipa.py" || EXIT_CODE=$?
 
-service httpd start
+#uncomment this to do it fully manually
+#letsencrypt --debug -v certonly --csr "$WORKDIR/req.csr" --email "$EMAIL" --agree-tos --no-eff-email --manual --preferred-challenges dns -d "$DOMAIN" --cert-path "$WORKDIR/cert.pem" --chain-path "$WORKDIR/chain.pem" --fullchain-path "$WORKDIR/fullchain.pem" --manual-public-ip-logging-ok || EXIT_CODE=$?
+
 
 # replace the cert
 
+#backup temporarally
 cp "$WORKDIR/req.key" /tmp/req.key 
 cp "$WORKDIR/cert.pem" /tmp/cert.pem
 
 #uncomment this line to fix any expiration isues
-#date -s "3 SEP 2021"
+#date -s "10 DEC 2021"
+
+#service httpd start
 
 yes $DIRPASSWD "" | ipa-server-certinstall -w -d "$WORKDIR/req.key" "$WORKDIR/cert.pem"
 ipactl restart
+
+mv "$WORKDIR/cert.pem"  "$WORKDIR/cert.pem.save"
+mv "$WORKDIR/chain.pem"  "$WORKDIR/chain.pem.save"
+mv "$WORKDIR/fullchain.pem"  "$WORKDIR/fullchain.pem.save"
